@@ -1,0 +1,1984 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Folio — EPUB Reader</title>
+<style id="bookFontFaces"></style>
+<style id="bookScopedStyle"></style>
+<style>
+  :root{
+    /* Terminal palette: OLED black, white, and purple (hover only) */
+    --bg: #000;
+    --bg-2: #000;
+    --surface: #000;
+    --surface-2: #000;
+    --border: rgba(255,255,255,.30);
+    --border-soft: rgba(255,255,255,.16);
+    --ink: #fff;
+    --ink-dim: rgba(255,255,255,.72);
+    --ink-faint: rgba(255,255,255,.5);
+    --purple: #a259ff;
+    --font-ui: ui-monospace, 'Cascadia Mono', 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono', monospace;
+    --font-serif: Georgia, 'Noto Serif', 'Times New Roman', serif;
+    --font-sans-read: 'Lucida Grande', 'Lucida Sans Unicode', Verdana, Helvetica, sans-serif;
+    --reader-size: 19px;
+    --reader-leading: 1.7;
+    --reader-family: var(--font-serif);
+    --reader-max: 900px;
+    --topbar-h: 64px;
+  }
+
+  *{ box-sizing: border-box; border-radius: 0; }
+  html,body{ height: 100%; }
+  body{
+    margin:0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection{ background: #fff; color: #000; }
+
+  /* Thin filled scrollbar thumb: white, grows wider and turns purple on hover.
+     The scrollbar itself keeps a constant 10px footprint (no layout shift); the visible
+     thumb is made thin with a transparent border plus background-clip. */
+  ::-webkit-scrollbar{ width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track{ background: transparent; }
+  ::-webkit-scrollbar-corner{ background: transparent; }
+  ::-webkit-scrollbar-thumb{ background-color: var(--ink); background-clip: padding-box; border: 0 solid transparent; }
+  ::-webkit-scrollbar-thumb:vertical{ border-left-width: 7px; }
+  ::-webkit-scrollbar-thumb:horizontal{ border-top-width: 7px; }
+  ::-webkit-scrollbar-thumb:hover{ background-color: var(--purple); border-width: 0; }
+
+  :focus-visible{ outline: 1px dashed #fff; outline-offset: 3px; }
+
+  button{ font-family: inherit; color: inherit; cursor: pointer; }
+
+  .app{
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    height: 100vh;
+    width: 100vw;
+    transition: grid-template-columns .12s ease-out;
+  }
+  .app.sidebar-collapsed{ grid-template-columns: 0px 1fr; }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar{
+    background: var(--bg-2);
+    border-right: 1px dashed var(--border);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .app.sidebar-collapsed .sidebar{ border-right-width: 0; }
+  .sidebar-head{
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 18px 16px 12px;
+    flex-shrink: 0;
+  }
+  .brand{
+    display:flex; align-items:center; gap:8px;
+    font-weight: 700; font-size: 16px;
+    white-space: nowrap;
+  }
+  .brand-mark{ flex-shrink:0; }
+  .brand-mark::before{ content: '>'; }
+  .brand::after{ content: '_'; margin-left: -6px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink{ 50%{ opacity: 0; } }
+  @media (prefers-reduced-motion: reduce){ .brand::after{ animation: none; } }
+
+  .icon-btn{
+    width: 36px; height: 36px;
+    display:flex; align-items:center; justify-content:center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    font-size: 14px;
+    transition: transform .06s ease-out, border-color .08s ease-out;
+    flex-shrink: 0;
+  }
+  .icon-btn:hover{ border-color: var(--purple); }
+  .icon-btn:active{ transform: scale(.94); }
+  .icon-btn.active{ background: #fff; border-color: #fff; color: #000; }
+  .icon-btn.active:hover{ border-color: var(--purple); }
+  .icon-btn.pulse{ animation: pulse .2s ease-out; }
+  @keyframes pulse{ 0%{ transform: scale(1); } 45%{ transform: scale(1.14); } 100%{ transform: scale(1); } }
+
+  .tabs{
+    display:flex; gap: 6px;
+    margin: 4px 16px 14px;
+    flex-shrink: 0;
+  }
+  .tab{
+    flex:1; background: none; border: 1px solid var(--border);
+    padding: 8px 10px;
+    font-size: 12.5px; color: var(--ink-dim);
+    transition: border-color .08s ease-out;
+  }
+  .tab:hover{ border-color: var(--purple); }
+  .tab.active{ background: #fff; border-color: #fff; color: #000; font-weight: 700; }
+  .tab.active:hover{ border-color: var(--purple); }
+
+  .tab-panel{ flex:1; min-height:0; overflow-y:auto; padding: 0 12px 16px; }
+  .tab-panel.hidden{ display:none; }
+
+  .folder-controls{ display:flex; gap:8px; padding: 4px 4px 14px; flex-wrap: wrap; }
+  #refreshLibrary{ flex: 1 0 100%; }
+  .btn-primary, .btn-secondary{
+    flex:1; padding: 10px 6px;
+    font-size: 12px; font-weight: 700; border: 1px solid var(--border);
+    background: var(--surface);
+    transition: transform .06s ease-out, border-color .08s ease-out;
+    white-space: nowrap;
+  }
+  .btn-primary{ color: #fff; border-color: #fff; }
+  .btn-secondary{ color: var(--ink-dim); }
+  .btn-primary:hover, .btn-secondary:hover{ border-color: var(--purple); }
+  .btn-primary:active, .btn-secondary:active{ transform: scale(.97); }
+
+  .hint{
+    font-size: 11.5px; color: var(--ink-faint); line-height: 1.5;
+    padding: 0 6px 10px;
+  }
+
+  .library-list, .toc-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+  .book-item, .toc-item{
+    display:flex; align-items:center; gap:10px;
+    padding: 10px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border-soft);
+    text-align:left; width:100%;
+    transition: border-color .08s ease-out;
+  }
+  .book-item:hover, .toc-item:hover{ border-color: var(--purple); }
+  .book-item.open{ border-color: #fff; }
+  .book-item.open:hover{ border-color: var(--purple); }
+  .book-cover{
+    width: 30px; height: 40px; flex-shrink:0;
+    border: 1px solid var(--border);
+    display:flex; align-items:center; justify-content:center;
+    font-size: 12px; color: var(--ink-dim);
+  }
+  .book-cover.has-img{ padding:0; }
+  .book-cover img{ display:block; width:100%; height:100%; object-fit:contain; }
+  .book-info{ min-width:0; display:flex; flex-direction:column; gap:2px; }
+  .book-name{ font-size: 12.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
+  .book-sub{ font-size: 11px; color: var(--ink-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
+
+  .library-list li{ display:flex; gap:6px; }
+  .library-list .book-item{ flex:1; min-width:0; }
+  .book-remove{
+    width: 28px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+    background: var(--surface); border: 1px solid var(--border);
+    font-size: 14px; color: var(--ink-dim);
+    transition: border-color .08s ease-out, transform .06s ease-out;
+  }
+  .book-remove:hover{ border-color: var(--purple); }
+  .book-remove:active{ transform: scale(.94); }
+
+  .folders{ margin-top: 18px; }
+  .folders.hidden{ display:none; }
+  .folder-path{ display:block; font-size: 11.5px; color: var(--ink-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tab-panel.dropping{ outline: 1px solid var(--purple); }
+
+  .toc-item{ font-size: 12.5px; color: var(--ink-dim); cursor:pointer; }
+  .toc-item[data-level="1"]{ padding-left: 22px; font-size: 12px; }
+  .toc-item[data-level="2"]{ padding-left: 34px; font-size: 11.5px; }
+  .toc-item.current{ color: var(--ink); border-color: #fff; }
+  .toc-item.current:hover{ border-color: var(--purple); }
+  .toc-item.current::before{ content:'>'; flex-shrink:0; font-weight:700; }
+
+  .empty-state{ padding: 18px 10px; font-size: 12.5px; color: var(--ink-faint); line-height:1.6; }
+
+  /* ---------- Main ---------- */
+  .main{ position:relative; display:flex; flex-direction:column; min-width:0; height:100vh; }
+
+  .topbar{
+    height: var(--topbar-h); flex-shrink:0;
+    display:flex; align-items:center; gap: 14px;
+    padding: 0 18px;
+    border-bottom: 1px dashed var(--border);
+    background: var(--bg);
+    z-index: 5;
+  }
+  .book-meta{ min-width:0; flex:1; }
+  .book-title{ font-size: 13.5px; font-weight: 700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .book-author{ font-size: 11.5px; color: var(--ink-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .utilities{ display:flex; align-items:center; gap:6px; flex-shrink:0; }
+  .divider-dot{ width:0; height: 20px; border-left: 1px dashed var(--border); margin: 0 4px; flex-shrink:0; }
+
+  /* ---------- Reader area ---------- */
+  .reader-wrap{
+    position: relative; flex:1; min-height:0;
+    display:flex; align-items:stretch; justify-content:center;
+    padding: 26px 36px;
+    overflow: hidden;
+  }
+  .app.focus .topbar{ display:none; }
+  .app.focus .reader-wrap{ padding-top: 44px; }
+
+  .nav-arrow{
+    position:relative; z-index:2; flex-shrink:0;
+    width: 44px; align-self:center;
+    height: 90px;
+    background: var(--surface); border: 1px solid var(--border);
+    font-size: 20px; color: var(--ink-dim);
+    display:flex; align-items:center; justify-content:center;
+    transition: border-color .08s ease-out, transform .06s ease-out;
+  }
+  .nav-arrow:hover:not(:disabled){ border-color: var(--purple); }
+  .nav-arrow:active:not(:disabled){ transform: scale(.95); }
+  .nav-arrow:disabled{ opacity: .25; cursor: default; }
+
+  .page{
+    position: relative; z-index:2;
+    flex: 1; max-width: 1180px;
+    margin: 0 22px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    overflow: hidden;
+    display:flex;
+    transition: max-width .12s ease-out;
+  }
+  .app.sidebar-collapsed .page{ max-width: none; }
+  @media (min-width: 781px){
+    .app.sidebar-collapsed .reader-wrap{ padding-left: 28px; padding-right: 28px; }
+  }
+  .page-inner{
+    width:100%; overflow-y:auto;
+    padding: 56px clamp(18px, 5%, 64px);
+    scroll-behavior: smooth;
+  }
+  .page-inner-limit{
+    max-width: var(--reader-max);
+    margin: 0 auto;
+    font-family: var(--reader-family);
+    font-size: var(--reader-size);
+    line-height: var(--reader-leading);
+    color: var(--ink);
+  }
+  /* The book's own stylesheet is scoped in (see @scope (#content) below,
+     injected at runtime) so things like centered lines or drop caps still
+     work. Font family is the one control we always want to win, even over
+     a book's explicit fonts, so it's pinned here with !important. */
+  .page-inner-limit, .page-inner-limit *{
+    font-family: var(--reader-family) !important;
+  }
+  .page-inner-limit p{ margin: 0 0 1.1em; }
+  .page-inner-limit img{ max-width:100%; height:auto; }
+  .page-inner-limit h1, .page-inner-limit h2, .page-inner-limit h3{
+    font-family: var(--font-serif) !important; line-height:1.25; color:#fff;
+    margin: 1.4em 0 .6em;
+  }
+  .page-inner-limit a{ color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+  .page-inner-limit a:hover{ color: var(--purple); }
+  .page-inner-limit hr{ border:none; border-top:1px solid var(--ink-faint);}
+  .page-inner-limit blockquote{
+    margin: 1.2em 0; padding: .2em 0 .2em 18px;
+    border-left: 2px solid var(--border); color: var(--ink-dim);
+  }
+
+  /* The welcome screen is app UI, not book text, so it stays in the terminal font */
+  .page-inner-limit .welcome, .page-inner-limit .welcome *{ font-family: var(--font-ui) !important; }
+  .welcome h1{
+    font-family: var(--font-ui); font-size: 28px; font-weight: 700;
+    margin: 0 0 14px; color: #fff;
+  }
+  .welcome h1::before{ content: '$ '; color: var(--ink-faint); }
+  .welcome p{ color: var(--ink-dim); font-size: 14px; line-height: 1.7; max-width: 52ch; }
+  .welcome .steps{ list-style:none; margin: 26px 0 0; padding:0; display:flex; flex-direction:column; gap:14px; }
+  .welcome .steps li{ display:flex; gap:14px; align-items:flex-start; }
+  .step-num{
+    flex-shrink:0;
+    font-family: var(--font-ui); font-size: 14px; font-weight:700; color:#fff;
+  }
+  .step-num::before{ content: '['; }
+  .step-num::after{ content: ']'; }
+  .welcome .steps strong{ display:block; font-size: 13.5px; color: var(--ink); margin-bottom: 2px; }
+  .welcome .steps span{ font-size: 12.5px; color: var(--ink-faint); }
+
+  /* Progress as a block bar: [######------] */
+  .progress-track{
+    height: 6px; flex-shrink:0; position:relative; z-index:3;
+    background: var(--border-soft);
+  }
+  .progress-fill{
+    height:100%; width:0%;
+    background: #fff;
+    transition: width .12s ease-out;
+  }
+
+  /* ---------- Settings popover ---------- */
+  .popover{
+    position: absolute; top: calc(var(--topbar-h) + 8px); right: 18px;
+    width: 260px; background: var(--surface); border: 1px solid #fff;
+    padding: 14px;
+    z-index: 20; display:none;
+  }
+  .popover.open{ display:block; }
+  .popover-row{ margin-bottom: 14px; }
+  .popover-row:last-child{ margin-bottom:0; }
+  .popover-label{ font-size: 11.5px; color: var(--ink-dim); margin-bottom: 8px; display:flex; justify-content:space-between; }
+  .seg{ display:flex; gap:6px; }
+  .seg button{
+    flex:1; background:none; border: 1px solid var(--border);
+    padding: 6px 0; font-size: 11.5px; color: var(--ink-dim);
+    transition: border-color .08s ease-out;
+  }
+  .seg button:hover{ border-color: var(--purple); }
+  .seg button.active{ background: #fff; border-color: #fff; color: #000; font-weight: 700; }
+  .seg button.active:hover{ border-color: var(--purple); }
+  input[type="range"]{
+    width:100%; accent-color: #fff; background: transparent;
+  }
+
+  /* ---------- Sidebar toggle on small screens ---------- */
+  .scrim{ display:none; }
+
+  @media (max-width: 780px){
+    .app{ grid-template-columns: 1fr; }
+    .sidebar{
+      position: fixed; inset: 0 22% 0 0; z-index: 40;
+      transform: translateX(-100%);
+      transition: transform .12s ease-out;
+    }
+    .app.sidebar-open .sidebar{ transform: translateX(0); }
+    .app.sidebar-open .scrim{
+      display:block; position: fixed; inset:0; z-index:39;
+      background: rgba(0,0,0,.7);
+    }
+    .reader-wrap{ padding: 18px 12px; }
+    .nav-arrow{ width: 34px; height: 64px; font-size: 16px; }
+    .page-inner{ padding: 32px 6%; }
+    .popover{ right: 12px; left: 12px; width:auto; }
+  }
+</style>
+</head>
+<body>
+<div class="app sidebar-collapsed" id="app">
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-head">
+      <div class="brand"><span class="brand-mark"></span>Folio</div>
+      <button class="icon-btn" id="closeSidebar" aria-label="Close sidebar">✕</button>
+    </div>
+    <div class="tabs">
+      <button class="tab active" data-tab="library">Library</button>
+      <button class="tab" data-tab="contents">Contents</button>
+    </div>
+
+    <div class="tab-panel" id="panel-library">
+      <div class="folder-controls">
+        <button class="btn-primary" id="pickFolder">Choose folder</button>
+        <button class="btn-secondary" id="pickFiles">Add files</button>
+        <button class="btn-secondary" id="refreshLibrary" hidden>Refresh</button>
+      </div>
+      <div class="hint">Folder selection reads local files only — nothing leaves this page.</div>
+      <ul class="library-list" id="libraryList">
+        <li class="empty-state">No books yet. Choose a folder of EPUBs, or add individual files, to begin.</li>
+      </ul>
+      <div class="folders hidden" id="foldersSection">
+        <div class="popover-label"><span>FOLDERS</span></div>
+        <ul class="library-list" id="folderList"></ul>
+      </div>
+    </div>
+
+    <div class="tab-panel hidden" id="panel-contents">
+      <ol class="toc-list" id="tocList">
+        <li class="empty-state">Open a book to see its table of contents.</li>
+      </ol>
+    </div>
+  </aside>
+
+  <div class="scrim" id="scrim"></div>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="icon-btn" id="toggleSidebar" aria-label="Toggle library">☰</button>
+      <div class="book-meta">
+        <div class="book-title" id="bookTitle">No book open</div>
+        <div class="book-author" id="bookAuthor"></div>
+      </div>
+      <div class="utilities">
+        <button class="icon-btn" id="fontDec" aria-label="Decrease text size" title="Smaller text">A−</button>
+        <button class="icon-btn" id="fontInc" aria-label="Increase text size" title="Larger text">A+</button>
+        <button class="icon-btn" id="fontFamily" aria-label="Toggle typeface" title="Toggle serif / sans">Aa</button>
+        <button class="icon-btn" id="bookmark" aria-label="Save reading position" title="Save position">☆</button>
+        <button class="icon-btn" id="focusMode" aria-label="Toggle focus mode" title="Focus mode">⤢</button>
+        <div class="divider-dot"></div>
+        <button class="icon-btn" id="openSettings" aria-label="Reading settings" title="More settings">⚙</button>
+      </div>
+    </header>
+
+    <div class="popover" id="settingsPopover">
+      <div class="popover-row">
+        <div class="popover-label"><span>Line spacing</span></div>
+        <div class="seg" id="leadingSeg">
+          <button data-val="1.4">Cozy</button>
+          <button data-val="1.7" class="active">Comfort</button>
+          <button data-val="2.0">Airy</button>
+        </div>
+      </div>
+      <div class="popover-row">
+        <div class="popover-label"><span>Page width</span></div>
+        <div class="seg" id="widthSeg">
+          <button data-val="610px">Narrow</button>
+          <button data-val="900px" class="active">Medium</button>
+          <button data-val="100%">Wide</button>
+        </div>
+      </div>
+      <div class="popover-row">
+        <div class="popover-label"><span>Text size</span><span id="sizeReadout">19px</span></div>
+        <input type="range" id="sizeSlider" min="14" max="30" step="1" value="19">
+      </div>
+    </div>
+
+    <div class="reader-wrap" id="readerWrap">
+      <button class="nav-arrow left" id="prevChapter" aria-label="Previous chapter" disabled>‹</button>
+
+      <article class="page">
+        <div class="page-inner" id="pageInner">
+          <div class="page-inner-limit" id="content">
+            <div class="welcome">
+              <h1>Your next chapter,<br>waiting.</h1>
+              <p>Folio reads EPUB files straight from your device — no uploads, no accounts. Open a folder to build a library, then tap a title to start reading.</p>
+              <ul class="steps">
+                <li><span class="step-num">1</span><div><strong>Choose a folder</strong><span>Point Folio at the folder where your EPUBs live.</span></div></li>
+                <li><span class="step-num">2</span><div><strong>Pick a book</strong><span>Your library appears in the sidebar — tap any cover to open it.</span></div></li>
+                <li><span class="step-num">3</span><div><strong>Adjust as you go</strong><span>Resize text, switch typefaces, and save your place with the star.</span></div></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <button class="nav-arrow right" id="nextChapter" aria-label="Next chapter" disabled>›</button>
+    </div>
+
+    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+  </main>
+</div>
+
+<input type="file" id="folderInput" webkitdirectory directory multiple hidden>
+<input type="file" id="fileInput" accept=".epub" multiple hidden>
+
+<script>
+(function(){
+  "use strict";
+
+  const TAURI = window.__TAURI__;
+  const IS_APP = !!(TAURI && TAURI.core);
+  const invoke = IS_APP ? TAURI.core.invoke : null;
+
+  /* ================= Built-in zip reader (no external library, works offline) =================
+     Reads the central directory of a .zip/.epub and inflates entries with the browser's own
+     DecompressionStream. Exposes the tiny API the reader needs: zip.file(path), zip.forEach(cb),
+     and entry.async('text' | 'blob'). */
+  class MiniZip {
+    constructor(buffer){
+      this.bytes = new Uint8Array(buffer);
+      this.view = new DataView(buffer);
+      this.entries = new Map();
+      this._parse();
+    }
+    _parse(){
+      const v = this.view, len = this.bytes.length;
+      let eocd = -1;
+      for(let i = len - 22; i >= Math.max(0, len - 65557); i--){
+        if(v.getUint32(i, true) === 0x06054b50){ eocd = i; break; }
+      }
+      if(eocd === -1) throw new Error('Not a valid zip file');
+      const total = v.getUint16(eocd + 10, true);
+      let p = v.getUint32(eocd + 16, true);
+      if(p === 0xFFFFFFFF || total === 0xFFFF) throw new Error('Zip64 archives are not supported');
+      const decoder = new TextDecoder('utf-8');
+      for(let n = 0; n < total; n++){
+        if(v.getUint32(p, true) !== 0x02014b50) break;
+        const method = v.getUint16(p + 10, true);
+        const csize = v.getUint32(p + 20, true);
+        const nlen = v.getUint16(p + 28, true);
+        const elen = v.getUint16(p + 30, true);
+        const clen = v.getUint16(p + 32, true);
+        const lho = v.getUint32(p + 42, true);
+        const name = decoder.decode(this.bytes.subarray(p + 46, p + 46 + nlen));
+        if(!name.endsWith('/')){
+          this.entries.set(name, new MiniZipEntry(this, name, method, csize, lho));
+        }
+        p += 46 + nlen + elen + clen;
+      }
+    }
+    file(path){ return this.entries.get(path) || null; }
+    forEach(cb){ this.entries.forEach((entry, name) => cb(name, entry)); }
+  }
+
+  class MiniZipEntry {
+    constructor(zip, name, method, csize, lho){
+      this.zip = zip; this.name = name; this.method = method; this.csize = csize; this.lho = lho;
+    }
+    async _data(){
+      const v = this.zip.view, b = this.zip.bytes;
+      if(v.getUint32(this.lho, true) !== 0x04034b50) throw new Error('Corrupt zip entry: ' + this.name);
+      const start = this.lho + 30 + v.getUint16(this.lho + 26, true) + v.getUint16(this.lho + 28, true);
+      const raw = b.subarray(start, start + this.csize);
+      if(this.method === 0) return raw;
+      if(this.method !== 8) throw new Error('Unsupported compression method ' + this.method);
+      const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      return new Uint8Array(await new Response(stream).arrayBuffer());
+    }
+    async async(type){
+      const data = await this._data();
+      if(type === 'text') return new TextDecoder('utf-8').decode(data);
+      if(type === 'blob') return new Blob([data]);
+      return data;
+    }
+  }
+
+  class LazyZip {
+    constructor(path, size){
+      this.path = path;
+      this.size = size;
+      this.entries = new Map();
+    }
+    async _range(offset, len){
+      return await invoke('read_epub_range', { path: this.path, offset, len });
+    }
+    async init(){
+      const tailLen = Math.min(this.size, 262144);
+      const tailOffset = this.size - tailLen;
+      const tail = new Uint8Array(await this._range(tailOffset, tailLen));
+      const tv = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
+      let eocd = -1;
+      for(let i = tail.length - 22; i >= Math.max(0, tail.length - 65557); i--){
+        if(tv.getUint32(i, true) === 0x06054b50){ eocd = i; break; }
+      }
+      if(eocd === -1) throw new Error('Not a valid zip file');
+      const total = tv.getUint16(eocd + 10, true);
+      const cdSize = tv.getUint32(eocd + 12, true);
+      const cdOffset = tv.getUint32(eocd + 16, true);
+      if(cdOffset === 0xFFFFFFFF || cdSize === 0xFFFFFFFF || total === 0xFFFF) throw new Error('Zip64 archives are not supported');
+      let cd;
+      if(cdOffset >= tailOffset && cdOffset + cdSize <= this.size){
+        cd = tail.subarray(cdOffset - tailOffset, cdOffset - tailOffset + cdSize);
+      } else {
+        cd = new Uint8Array(await this._range(cdOffset, cdSize));
+      }
+      const v = new DataView(cd.buffer, cd.byteOffset, cd.byteLength);
+      const decoder = new TextDecoder('utf-8');
+      let p = 0;
+      for(let n = 0; n < total; n++){
+        if(v.getUint32(p, true) !== 0x02014b50) break;
+        const method = v.getUint16(p + 10, true);
+        const csize = v.getUint32(p + 20, true);
+        const nlen = v.getUint16(p + 28, true);
+        const elen = v.getUint16(p + 30, true);
+        const clen = v.getUint16(p + 32, true);
+        const lho = v.getUint32(p + 42, true);
+        const name = decoder.decode(cd.subarray(p + 46, p + 46 + nlen));
+        if(!name.endsWith('/')){
+          this.entries.set(name, new LazyZipEntry(this, name, method, csize, lho));
+        }
+        p += 46 + nlen + elen + clen;
+      }
+    }
+    file(path){ return this.entries.get(path) || null; }
+    forEach(cb){ this.entries.forEach((entry, name) => cb(name, entry)); }
+  }
+
+  class LazyZipEntry {
+    constructor(zip, name, method, csize, lho){
+      this.zip = zip; this.name = name; this.method = method; this.csize = csize; this.lho = lho;
+    }
+    async _data(){
+      const hbuf = new Uint8Array(await this.zip._range(this.lho, 30));
+      const hv = new DataView(hbuf.buffer, hbuf.byteOffset, hbuf.byteLength);
+      if(hv.getUint32(0, true) !== 0x04034b50) throw new Error('Corrupt zip entry: ' + this.name);
+      const start = this.lho + 30 + hv.getUint16(26, true) + hv.getUint16(28, true);
+      const raw = new Uint8Array(await this.zip._range(start, this.csize));
+      if(this.method === 0) return raw;
+      if(this.method !== 8) throw new Error('Unsupported compression method ' + this.method);
+      const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      return new Uint8Array(await new Response(stream).arrayBuffer());
+    }
+    async async(type){
+      const data = await this._data();
+      if(type === 'text') return new TextDecoder('utf-8').decode(data);
+      if(type === 'blob') return new Blob([data]);
+      return data;
+    }
+  }
+
+
+  /* ---------------- State ---------------- */
+  const state = {
+    books: [],          // { id, name, source: 'handle'|'file', handle, file, meta }
+    folders: [],        // remembered folder paths (app)
+    removed: [],        // paths the user removed, kept out of rescans (app)
+    currentBookId: null,
+    zip: null,
+    opfDir: '',
+    manifest: null,      // id -> {href, mediaType}
+    spine: [],           // array of resolved paths
+    spineHrefRaw: [],
+    toc: [],              // { title, href, level }
+    chapterIndex: 0,
+    imageCache: new Map(), // resolvedPath -> blobURL
+    fontSizeIdx: 19,
+    leading: 1.7,
+    maxWidth: '900px',
+    family: 'serif',      // 'serif' | 'sans'
+    focus: false
+  };
+
+  /* ---------------- Element refs ---------------- */
+  const app = document.getElementById('app');
+  const sidebar = document.getElementById('sidebar');
+  const scrim = document.getElementById('scrim');
+  const libraryList = document.getElementById('libraryList');
+  const tocList = document.getElementById('tocList');
+  const bookTitleEl = document.getElementById('bookTitle');
+  const bookAuthorEl = document.getElementById('bookAuthor');
+  const content = document.getElementById('content');
+  const pageInner = document.getElementById('pageInner');
+  const progressFill = document.getElementById('progressFill');
+  const prevBtn = document.getElementById('prevChapter');
+  const nextBtn = document.getElementById('nextChapter');
+  const bookmarkBtn = document.getElementById('bookmark');
+  const settingsPopover = document.getElementById('settingsPopover');
+  const sizeSlider = document.getElementById('sizeSlider');
+  const sizeReadout = document.getElementById('sizeReadout');
+
+  /* ---------------- Helpers ---------------- */
+  function decodePath(p){ try{ return decodeURIComponent(p); }catch(e){ return p; } }
+
+  function dirOf(path){
+    const i = path.lastIndexOf('/');
+    return i === -1 ? '' : path.slice(0, i);
+  }
+
+  function joinPath(dir, rel){
+    rel = decodePath(rel.split('#')[0]);
+    if(/^[a-z]+:\/\//i.test(rel)) return rel; // external
+    const parts = (dir ? dir.split('/') : []).concat(rel.split('/'));
+    const stack = [];
+    for(const part of parts){
+      if(part === '' || part === '.') continue;
+      if(part === '..') stack.pop();
+      else stack.push(part);
+    }
+    return stack.join('/');
+  }
+
+  function findZipFile(zip, path){
+    if(zip.file(path)) return zip.file(path);
+    // try case-insensitive / leading-slash tolerant match
+    const target = path.replace(/^\//,'').toLowerCase();
+    let found = null;
+    zip.forEach((rel, entry) => {
+      if(!found && rel.toLowerCase() === target) found = entry;
+    });
+    return found;
+  }
+
+  /* ---------------- Cover thumbnails (app) ---------------- */
+  async function loadOpf(zip){
+    const containerXml = await findZipFile(zip, 'META-INF/container.xml').async('text');
+    const containerDoc = new DOMParser().parseFromString(containerXml, 'application/xml');
+    const rootfile = containerDoc.querySelector('rootfile');
+    const opfPath = rootfile.getAttribute('full-path');
+    const opfDir = dirOf(opfPath);
+    const opfText = await findZipFile(zip, opfPath).async('text');
+    const opfDoc = new DOMParser().parseFromString(opfText, 'application/xml');
+    return { opfPath, opfDir, opfDoc };
+  }
+
+  function coverType(mediaType, path){
+    const mt = (mediaType || '').toLowerCase();
+    if(mt === 'image/jpeg' || mt === 'image/jpg') return 'image/jpeg';
+    if(mt === 'image/png' || mt === 'image/gif' || mt === 'image/webp') return mt;
+    const ext = ((path || '').split('?')[0].split('#')[0].split('.').pop() || '').toLowerCase();
+    if(ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+    if(ext === 'png' || ext === 'gif' || ext === 'webp') return 'image/' + ext;
+    return null;
+  }
+
+  // Returns ordered candidate covers ({ data, type }) in item-19 priority order.
+  async function extractCover(zip){
+    const found = [];
+    const seen = new Set();
+    const pages = new Set();
+    const opf = await loadOpf(zip);
+    const opfDir = opf.opfDir;
+    const items = [];
+    opf.opfDoc.querySelectorAll('manifest > item').forEach(item => items.push({
+      id: item.getAttribute('id') || '',
+      href: item.getAttribute('href') || '',
+      mediaType: item.getAttribute('media-type') || '',
+      properties: item.getAttribute('properties') || ''
+    }));
+    const byId = {};
+    for(const item of items) byId[item.id] = item;
+
+    function push(path, type){
+      const key = path.toLowerCase();
+      if(seen.has(key)) return;
+      seen.add(key);
+      found.push({ path, type });
+    }
+    function addItem(item){
+      if(!item || !item.href) return;
+      const path = joinPath(opfDir, item.href.split(/[?#]/)[0]);
+      const type = coverType(item.mediaType, path);
+      if(type) push(path, type);
+    }
+    async function addPage(item){
+      if(!item || !item.href) return;
+      const path = joinPath(opfDir, item.href.split(/[?#]/)[0]);
+      const key = path.toLowerCase();
+      if(pages.has(key)) return;
+      pages.add(key);
+      const direct = coverType('', path);
+      if(direct){ push(path, direct); return; }
+      const entry = findZipFile(zip, path);
+      if(!entry) return;
+      const text = await entry.async('text');
+      const page = new DOMParser().parseFromString(text, 'text/html');
+      const img = page.querySelector('img');
+      const svgImage = img ? null : page.querySelector('image');
+      const src = img ? img.getAttribute('src') : (svgImage ? (svgImage.getAttribute('href') || svgImage.getAttribute('xlink:href')) : null);
+      if(!src) return;
+      const imgPath = joinPath(dirOf(path), src.split(/[?#]/)[0]);
+      const imgType = coverType('', imgPath);
+      if(imgType) push(imgPath, imgType);
+    }
+
+    // 1. EPUB 3: manifest item with the cover-image property
+    for(const item of items) if(item.properties.split(/\s+/).includes('cover-image')) addItem(item);
+
+    // 2. EPUB 2: <meta name="cover" content="ID">
+    let metaId = null;
+    opf.opfDoc.querySelectorAll('metadata meta').forEach(meta => {
+      if(!metaId && (meta.getAttribute('name') || '').toLowerCase() === 'cover') metaId = meta.getAttribute('content');
+    });
+    if(metaId && byId[metaId]){
+      const item = byId[metaId];
+      if(coverType(item.mediaType, item.href)) addItem(item);
+      else await addPage(item);
+    }
+
+    // 3. cover page: guide reference, or an XHTML item that looks like a cover
+    const guide = opf.opfDoc.querySelector('guide > reference[type="cover"]');
+    if(guide) await addPage({ href: guide.getAttribute('href') });
+    for(const item of items){
+      const ext = ((item.href || '').split(/[?#]/)[0].split('.').pop() || '').toLowerCase();
+      if(!/^x?html?$/.test(ext)) continue;
+      if(/cover/i.test(item.id) || /cover/i.test(item.href)) await addPage(item);
+    }
+
+    // 4. fallback: an image whose id or href contains "cover"
+    for(const item of items){
+      if(coverType(item.mediaType, item.href) && (/cover/i.test(item.id) || /cover/i.test(item.href))) addItem(item);
+    }
+
+    const candidates = [];
+    for(const item of found){
+      const entry = findZipFile(zip, item.path);
+      if(!entry || entry.csize > 20 * 1024 * 1024) continue;
+      const data = await entry.async('raw');
+      if(!data || !data.length || data.length > 20 * 1024 * 1024) continue;
+      candidates.push({ data, type: item.type });
+    }
+    return candidates;
+  }
+
+  // Reads just the pixel dimensions from a PNG/GIF/WebP/JPEG header (null if unknown).
+  function imageSize(b){
+    try{
+      if(b.length > 24 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47){
+        const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+        return { w: v.getUint32(16), h: v.getUint32(20) };
+      }
+      if(b.length > 10 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46){
+        return { w: b[6] | (b[7] << 8), h: b[8] | (b[9] << 8) };
+      }
+      if(b.length > 30 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50 && b[12] === 0x56 && b[13] === 0x50 && b[14] === 0x38){
+        const kind = String.fromCharCode(b[12], b[13], b[14], b[15]);
+        if(kind === 'VP8 ') return { w: (b[26] | (b[27] << 8)) & 0x3fff, h: (b[28] | (b[29] << 8)) & 0x3fff };
+        if(kind === 'VP8L'){
+          const bits = b[21] | (b[22] << 8) | (b[23] << 16) | (b[24] << 24);
+          return { w: (bits & 0x3fff) + 1, h: ((bits >> 14) & 0x3fff) + 1 };
+        }
+        if(kind === 'VP8X') return { w: 1 + (b[24] | (b[25] << 8) | (b[26] << 16)), h: 1 + (b[27] | (b[28] << 8) | (b[29] << 16)) };
+      }
+      if(b.length > 4 && b[0] === 0xff && b[1] === 0xd8){
+        let i = 2;
+        while(i + 9 < b.length){
+          if(b[i] !== 0xff){ i++; continue; }
+          const marker = b[i + 1];
+          if(marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)){ i += 2; continue; }
+          const len = (b[i + 2] << 8) | b[i + 3];
+          if(marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc){
+            return { w: (b[i + 7] << 8) | b[i + 8], h: (b[i + 5] << 8) | b[i + 6] };
+          }
+          i += 2 + len;
+        }
+      }
+    }catch(e){}
+    return null;
+  }
+
+  async function makeCoverThumb(candidates){
+    for(const candidate of candidates){
+      let bitmap = null;
+      try{
+        const blob = new Blob([candidate.data], { type: candidate.type });
+        const size = imageSize(candidate.data);
+        try{
+          if(size && (size.w > 180 || size.h > 240)){
+            const scale = Math.min(180 / size.w, 240 / size.h);
+            bitmap = await createImageBitmap(blob, {
+              resizeWidth: Math.max(1, Math.round(size.w * scale)),
+              resizeHeight: Math.max(1, Math.round(size.h * scale)),
+              resizeQuality: 'high'
+            });
+          } else {
+            bitmap = await createImageBitmap(blob);
+          }
+        }catch(e){
+          bitmap = await createImageBitmap(blob);
+        }
+        const natW = size ? size.w : bitmap.width, natH = size ? size.h : bitmap.height;
+        const fit = Math.min(90 / natW, 120 / natH, 1);
+        const w = Math.max(1, Math.round(natW * fit)), h = Math.max(1, Math.round(natH * fit));
+        const canvas = document.createElement('canvas');
+        canvas.width = 90; canvas.height = 120;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, 90, 120);
+        ctx.drawImage(bitmap, Math.floor((90 - w) / 2), Math.floor((120 - h) / 2), w, h);
+        return canvas.toDataURL('image/jpeg', 0.7);
+      }catch(e){
+        // try the next candidate
+      } finally {
+        if(bitmap) bitmap.close();
+      }
+    }
+    return null;
+  }
+
+  function bookIdFor(name, size){ return name + '__' + size; }
+
+  function baseName(p){ return p.split(/[\\/]/).pop() || p; }
+
+  function pathBook(path){ return { id: path, name: baseName(path), source: 'path', path, meta: null, bookmark: null, missing: false }; }
+
+  function escapeHtml(s){
+    return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  }
+
+  /* ---------------- Library: adding books ---------------- */
+  function addBooks(entries){
+    let firstNew = null;
+    for(const e of entries){
+      const dup = IS_APP
+        ? state.books.some(b => b.path && b.path.toLowerCase() === e.path.toLowerCase())
+        : state.books.some(b => b.id === e.id);
+      if(dup) continue;
+      state.books.push(e);
+      if(!firstNew) firstNew = e;
+    }
+    if(IS_APP && entries.length){
+      const keys = new Set(entries.map(e => e.path.toLowerCase()));
+      state.removed = state.removed.filter(p => !keys.has(p.toLowerCase()));
+    }
+    renderLibrary();
+    if(IS_APP) saveLibrary();
+    if(IS_APP) queueCovers();
+  }
+
+  function rememberFolder(dir){
+    if(!state.folders.some(f => f.toLowerCase() === dir.toLowerCase())) state.folders.push(dir);
+  }
+
+  async function addFolder(dir){
+    const paths = await invoke('scan_epubs', { dir });
+    addBooks(paths.map(pathBook));
+    rememberFolder(dir);
+    folderMissing.delete(dir);
+    renderFolders();
+    if(IS_APP) saveLibrary();
+    return paths;
+  }
+
+  async function pickFolder(){
+    if(IS_APP){
+      try{
+        const dir = await TAURI.dialog.open({ directory: true });
+        if(!dir) return;
+        await addFolder(dir);
+      }catch(err){ console.error(err); }
+      return;
+    }
+    if(window.showDirectoryPicker){
+      try{
+        const dirHandle = await window.showDirectoryPicker();
+        const entries = [];
+        await collectFromDirHandle(dirHandle, entries, 0);
+        addBooks(entries);
+      }catch(err){
+        if(err.name !== 'AbortError') console.error(err);
+      }
+    } else {
+      document.getElementById('folderInput').click();
+    }
+  }
+
+  async function collectFromDirHandle(dirHandle, out, depth){
+    for await (const [name, handle] of dirHandle.entries()){
+      if(handle.kind === 'file' && /\.epub$/i.test(name)){
+        const file = await handle.getFile();
+        out.push({ id: bookIdFor(name, file.size), name, source:'handle', handle, size:file.size });
+      } else if(handle.kind === 'directory' && depth < 2){
+        await collectFromDirHandle(handle, out, depth+1);
+      }
+    }
+  }
+
+  function handleFolderInput(fileList){
+    const entries = [];
+    for(const file of fileList){
+      if(/\.epub$/i.test(file.name)){
+        entries.push({ id: bookIdFor(file.name, file.size), name: file.name, source:'file', file, size:file.size });
+      }
+    }
+    addBooks(entries);
+  }
+
+  function handleFilesInput(fileList){
+    handleFolderInput(fileList);
+  }
+
+  /* ---------------- Library: persistence (app) ---------------- */
+  let librarySaving = false;
+  let libraryDirty = false;
+  const folderMissing = new Set();
+
+  function libraryPayload(){
+    const books = [];
+    for(const b of state.books){
+      if(b.source !== 'path') continue;
+      const item = { path: b.path, name: b.name };
+      if(b.meta && b.meta.title) item.title = b.meta.title;
+      if(b.meta && b.meta.author) item.author = b.meta.author;
+      if(b.bookmark) item.bookmark = b.bookmark;
+      books.push(item);
+    }
+    return JSON.stringify({ version: 1, books, folders: state.folders, removed: state.removed });
+  }
+
+  function saveLibrary(){
+    if(!IS_APP) return;
+    libraryDirty = true;
+    flushLibrary();
+  }
+
+  async function flushLibrary(){
+    if(librarySaving || !libraryDirty) return;
+    libraryDirty = false;
+    librarySaving = true;
+    try{ await invoke('save_data', { name:'library', contents: libraryPayload() }); }
+    catch(err){ console.error(err); }
+    librarySaving = false;
+    if(libraryDirty) flushLibrary();
+  }
+
+  async function loadLibrary(){
+    try{
+      const raw = await invoke('load_data', { name:'library' });
+      if(!raw){ renderLibrary(); return; }
+      const data = JSON.parse(raw);
+      state.folders = Array.isArray(data.folders) ? data.folders.filter(f => typeof f === 'string') : [];
+      state.removed = Array.isArray(data.removed) ? data.removed.filter(p => typeof p === 'string') : [];
+      const books = Array.isArray(data.books) ? data.books.filter(b => b && typeof b.path === 'string') : [];
+      const paths = books.map(b => b.path);
+      let exists = [];
+      try{ exists = await invoke('check_paths', { paths }); }catch(e){ exists = paths.map(() => true); }
+      state.books = books.map((b, i) => ({
+        id: b.path,
+        name: b.name || baseName(b.path),
+        source: 'path',
+        path: b.path,
+        meta: (b.title || b.author) ? { title: b.title || '', author: b.author || '' } : null,
+        bookmark: b.bookmark || null,
+        missing: !exists[i]
+      }));
+      renderLibrary();
+    }catch(err){
+      console.error(err);
+      state.books = [];
+      state.folders = [];
+      state.removed = [];
+      renderLibrary();
+    }
+  }
+
+  /* ---------------- Covers: storage + background queue (app) ---------------- */
+  let covers = {};
+  let coversLoaded = false;
+  let coversSaving = false;
+  let coversDirty = false;
+  let coversTimer = null;
+  const coverQueue = [];
+  let coverBusy = false;
+  const coverTiles = new Map();
+
+  function coverKey(p){ return p.toLowerCase(); }
+  function coverRecord(p){ return covers[coverKey(p)] || null; }
+
+  function saveCovers(){
+    if(!IS_APP) return;
+    coversDirty = true;
+    if(coversTimer) return;
+    coversTimer = setTimeout(() => { coversTimer = null; flushCovers(); }, 2000);
+  }
+
+  async function flushCovers(){
+    if(coversSaving || !coversDirty) return;
+    coversDirty = false;
+    coversSaving = true;
+    try{ await invoke('save_data', { name:'covers', contents: JSON.stringify({ version: 1, covers }) }); }
+    catch(err){ console.error(err); }
+    coversSaving = false;
+    if(coversDirty) flushCovers();
+  }
+
+  async function loadCovers(){
+    try{
+      const raw = await invoke('load_data', { name:'covers' });
+      const map = raw ? (JSON.parse(raw).covers || {}) : {};
+      for(const key of Object.keys(map)){
+        const rec = map[key];
+        if(rec && (rec.none === true || typeof rec.img === 'string')) covers[key] = rec;
+      }
+    }catch(err){ console.error(err); covers = {}; }
+    coversLoaded = true;
+    renderLibrary();
+  }
+
+  function pruneCovers(){
+    if(!IS_APP) return;
+    const live = new Set();
+    for(const b of state.books) if(b.path) live.add(coverKey(b.path));
+    let changed = false;
+    for(const key of Object.keys(covers)){
+      if(!live.has(key)){ delete covers[key]; changed = true; }
+    }
+    if(changed) saveCovers();
+  }
+
+  async function coverForPath(path, size){
+    const zip = new LazyZip(path, size);
+    await zip.init();
+    const candidates = await extractCover(zip);
+    if(!candidates.length) return { none: true };
+    const img = await makeCoverThumb(candidates);
+    return img ? { img } : { none: true };
+  }
+
+  function updateCoverTile(b){
+    const rec = coverRecord(b.path);
+    const tile = coverTiles.get(b.id);
+    if(!rec || !rec.img || !tile) return;
+    tile.classList.add('has-img');
+    tile.innerHTML = `<img src="${rec.img}" alt="">`;
+  }
+
+  function queueCovers(priority){
+    if(!IS_APP || !coversLoaded) return;
+    const fill = [];
+    if(priority && priority.path && !coverRecord(priority.path)) fill.push(priority);
+    for(const b of state.books){
+      if(!b.path || b.missing || coverRecord(b.path)) continue;
+      if(!fill.includes(b)) fill.push(b);
+    }
+    for(const b of fill) if(!coverQueue.includes(b)) coverQueue.push(b);
+    runCoverQueue();
+  }
+
+  async function runCoverQueue(){
+    if(coverBusy || !IS_APP) return;
+    coverBusy = true;
+    try{
+      while(coverQueue.length){
+        const b = coverQueue.shift();
+        if(!b.path || b.missing || !state.books.includes(b) || coverRecord(b.path)) continue;
+        await new Promise(r => setTimeout(r, 0));
+        try{
+          const size = await invoke('epub_size', { path: b.path });
+          const rec = await coverForPath(b.path, size);
+          covers[coverKey(b.path)] = Object.assign({ size }, rec);
+          updateCoverTile(b);
+          saveCovers();
+        }catch(err){
+          // file read error: no record, so a later queue retries it
+        }
+      }
+    } finally {
+      coverBusy = false;
+      if(!coverQueue.length){
+        if(coversTimer) clearTimeout(coversTimer);
+        coversTimer = null;
+        flushCovers();
+      }
+    }
+  }
+
+  /* ---------------- Library: rendering ---------------- */
+  function renderLibrary(){
+    coverTiles.clear();
+    if(state.books.length === 0){
+      libraryList.innerHTML = '<li class="empty-state">No books yet. Choose a folder of EPUBs, or add individual files, to begin.</li>';
+      renderFolders();
+      return;
+    }
+    libraryList.innerHTML = '';
+    for(const b of state.books){
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.className = 'book-item' + (b.id === state.currentBookId ? ' open' : '');
+      const title = (b.meta && b.meta.title) || b.name.replace(/\.epub$/i,'');
+      const author = b.missing ? 'File not found' : ((b.meta && b.meta.author) || 'Tap to open');
+      const coverImg = (IS_APP && b.path && coverRecord(b.path) && coverRecord(b.path).img) || '';
+      const coverHtml = coverImg ? `<img src="${coverImg}" alt="">` : title.slice(0,1).toUpperCase();
+      btn.innerHTML = `<span class="book-cover${coverImg ? ' has-img' : ''}">${coverHtml}</span>
+        <span class="book-info"><span class="book-name">${escapeHtml(title)}</span><span class="book-sub">${escapeHtml(author)}</span></span>`;
+      coverTiles.set(b.id, btn.querySelector('.book-cover'));
+      btn.addEventListener('click', () => openBook(b));
+      const remove = document.createElement('button');
+      remove.className = 'book-remove';
+      remove.textContent = '×';
+      remove.title = 'Remove from library';
+      remove.setAttribute('aria-label', 'Remove ' + title + ' from library');
+      remove.addEventListener('click', () => {
+        state.books = state.books.filter(x => x !== b);
+        if(IS_APP && b.path && !state.removed.some(p => p.toLowerCase() === b.path.toLowerCase())){
+          state.removed.push(b.path);
+        }
+        pruneCovers();
+        renderLibrary();
+        if(IS_APP) saveLibrary();
+      });
+      li.appendChild(btn);
+      li.appendChild(remove);
+      libraryList.appendChild(li);
+    }
+    renderFolders();
+  }
+
+  function renderFolders(){
+    const section = document.getElementById('foldersSection');
+    const list = document.getElementById('folderList');
+    if(!IS_APP || state.folders.length === 0){
+      section.classList.add('hidden');
+      list.innerHTML = '';
+      return;
+    }
+    section.classList.remove('hidden');
+    list.innerHTML = '';
+    for(const dir of state.folders){
+      const li = document.createElement('li');
+      const span = document.createElement('span');
+      span.className = 'book-item folder-path';
+      span.textContent = folderMissing.has(dir) ? dir + ' (not found)' : dir;
+      span.title = dir;
+      const forget = document.createElement('button');
+      forget.className = 'book-remove';
+      forget.textContent = '×';
+      forget.title = 'Forget folder';
+      forget.setAttribute('aria-label', 'Forget folder ' + dir);
+      forget.addEventListener('click', () => {
+        state.folders = state.folders.filter(f => f !== dir);
+        folderMissing.delete(dir);
+        renderFolders();
+        saveLibrary();
+      });
+      li.appendChild(span);
+      li.appendChild(forget);
+      list.appendChild(li);
+    }
+  }
+
+  let librarySyncing = false;
+  let lastLibrarySync = 0;
+  let refreshTimer = null;
+
+  function parentPath(p){
+    const i = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
+    if(i < 0) return '';
+    if(i === 2 && /^[a-z]:$/i.test(p.slice(0, 2))) return p.slice(0, 3);
+    return p.slice(0, i);
+  }
+
+  async function syncLibrary(){
+    if(!IS_APP || librarySyncing) return null;
+    librarySyncing = true;
+    lastLibrarySync = Date.now();
+    let added = 0, removed = 0, changed = false;
+    try{
+      for(const dir of state.folders.slice()){
+        let paths;
+        try{
+          paths = await invoke('scan_epubs', { dir });
+          if(folderMissing.delete(dir)) changed = true;
+        }catch(e){
+          if(!folderMissing.has(dir)){ folderMissing.add(dir); changed = true; }
+          continue;
+        }
+        for(const p of paths){
+          const key = p.toLowerCase();
+          if(state.removed.some(r => r.toLowerCase() === key)) continue;
+          if(state.books.some(b => b.path && b.path.toLowerCase() === key)) continue;
+          state.books.push(pathBook(p));
+          added++;
+        }
+      }
+      if(added) changed = true;
+      const pathBooks = state.books.filter(b => b.path);
+      let exists = [];
+      try{ exists = await invoke('check_paths', { paths: pathBooks.map(b => b.path) }); }
+      catch(err){ console.error(err); exists = []; }
+      if(exists.length !== pathBooks.length) exists = pathBooks.map(() => true);
+      const gone = pathBooks.filter((b, i) => !exists[i]);
+      let parents = [];
+      if(gone.length){
+        try{ parents = await invoke('check_dirs', { paths: gone.map(b => parentPath(b.path)) }); }
+        catch(err){ console.error(err); parents = []; }
+        if(parents.length !== gone.length) parents = gone.map(() => false);
+      }
+      const prune = new Set();
+      gone.forEach((b, i) => { if(parents[i]) prune.add(b); });
+      if(prune.size){
+        state.books = state.books.filter(b => !prune.has(b));
+        removed += prune.size;
+        changed = true;
+        pruneCovers();
+      }
+      pathBooks.forEach((b, i) => {
+        const missing = !exists[i] && !prune.has(b);
+        if(b.missing !== missing){ b.missing = missing; changed = true; }
+      });
+    } finally {
+      librarySyncing = false;
+    }
+    if(changed){
+      renderLibrary();
+      saveLibrary();
+      queueCovers();
+    } else {
+      renderFolders();
+    }
+    return { added, removed };
+  }
+
+  async function refreshLibrary(){
+    const btn = document.getElementById('refreshLibrary');
+    if(!btn || librarySyncing) return;
+    btn.disabled = true;
+    btn.textContent = 'Refreshing...';
+    const result = await syncLibrary();
+    btn.textContent = (result && (result.added || result.removed)) ? `+${result.added} -${result.removed}` : 'Up to date';
+    if(refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      btn.textContent = 'Refresh';
+      btn.disabled = false;
+    }, 1500);
+  }
+
+  async function handleDrop(paths){
+    const droppedBooks = [];
+    for(const p of paths){
+      if(/\.epub$/i.test(p)){
+        droppedBooks.push(p);
+      } else {
+        try{ await addFolder(p); }
+        catch(e){}
+      }
+    }
+    if(droppedBooks.length){
+      addBooks(droppedBooks.map(pathBook));
+      if(droppedBooks.length === 1){
+        const b = state.books.find(x => x.path && x.path.toLowerCase() === droppedBooks[0].toLowerCase());
+        if(b) openBook(b);
+      }
+    }
+    saveLibrary();
+  }
+
+  /* ---------------- Opening & parsing a book ---------------- */
+  async function getZipForBook(b){
+    if(b.source === 'path'){
+      const size = await invoke('epub_size', { path: b.path });
+      const rec = IS_APP ? coverRecord(b.path) : null;
+      if(rec && rec.size !== size){
+        delete covers[coverKey(b.path)];
+        saveCovers();
+        queueCovers(b);
+      }
+      if(size <= 4 * 1024 * 1024){
+        const buf = await invoke('read_epub', { path: b.path });
+        return new MiniZip(buf);
+      }
+      const zip = new LazyZip(b.path, size);
+      await zip.init();
+      return zip;
+    }
+    let file;
+    if(b.source === 'handle') file = await b.handle.getFile();
+    else file = b.file;
+    const buf = await file.arrayBuffer();
+    return new MiniZip(buf);
+  }
+
+  function showMissingBook(){
+    content.innerHTML = `<div class="welcome"><h1>File not found</h1><p>The file was not found. It may have been moved or deleted.</p></div>`;
+  }
+
+  async function openBook(b){
+    if(b.missing && IS_APP && b.path){
+      try{
+        const exists = await invoke('check_paths', { paths: [b.path] });
+        if(exists && exists[0]){
+          b.missing = false;
+          renderLibrary();
+        }
+      }catch(err){ console.error(err); }
+    }
+    if(b.missing){
+      showMissingBook();
+      return;
+    }
+    try{
+      const zip = await getZipForBook(b);
+      const { opfDir, opfDoc } = await loadOpf(zip);
+
+      const titleEl = opfDoc.getElementsByTagName('dc:title')[0] || opfDoc.querySelector('title');
+      const authorEl = opfDoc.getElementsByTagName('dc:creator')[0] || opfDoc.querySelector('creator');
+      const title = titleEl ? titleEl.textContent.trim() : b.name.replace(/\.epub$/i,'');
+      const author = authorEl ? authorEl.textContent.trim() : '';
+
+      const manifest = {};
+      opfDoc.querySelectorAll('manifest > item').forEach(item => {
+        manifest[item.getAttribute('id')] = {
+          href: item.getAttribute('href'),
+          mediaType: item.getAttribute('media-type') || '',
+          properties: item.getAttribute('properties') || ''
+        };
+      });
+
+      const spineHrefRaw = [];
+      const spine = [];
+      opfDoc.querySelectorAll('spine > itemref').forEach(itemref => {
+        const idref = itemref.getAttribute('idref');
+        const item = manifest[idref];
+        if(item){
+          spineHrefRaw.push(item.href);
+          spine.push(joinPath(opfDir, item.href));
+        }
+      });
+
+      // revoke old image blobs
+      for(const url of state.imageCache.values()) URL.revokeObjectURL(url);
+      state.imageCache = new Map();
+
+      state.zip = zip;
+      state.opfDir = opfDir;
+      state.manifest = manifest;
+      state.spine = spine;
+      state.spineHrefRaw = spineHrefRaw;
+      state.currentBookId = b.id;
+      b.meta = { title, author };
+      if(IS_APP) saveLibrary();
+
+      // TOC: try epub3 nav, else epub2 ncx, else fall back to spine
+      let toc = await parseNav3(zip, opfDir, manifest);
+      if(toc.length === 0) toc = await parseNCX(zip, opfDir, manifest, opfDoc);
+      if(toc.length === 0){
+        toc = spine.map((path, i) => ({ title: `Chapter ${i+1}`, href: spineHrefRaw[i], level: 0, resolvedPath: path }));
+      }
+      state.toc = toc;
+
+      bookTitleEl.textContent = title;
+      bookAuthorEl.textContent = author;
+      renderLibrary();
+      if(IS_APP) queueCovers(b);
+      renderTOC();
+
+      const saved = loadBookmark(b.id);
+      state.chapterIndex = saved ? saved.chapterIndex : 0;
+      await renderChapter(state.chapterIndex, saved ? saved.scrollTop : 0);
+      switchTab('contents');
+      closeSidebarMobile();
+    }catch(err){
+      console.error(err);
+      if(IS_APP && b.path){
+        try{
+          const exists = await invoke('check_paths', { paths: [b.path] });
+          if(!exists || !exists[0]){
+            b.missing = true;
+            renderLibrary();
+            showMissingBook();
+            return;
+          }
+          if(b.missing){
+            b.missing = false;
+            renderLibrary();
+          }
+        }catch(e){ console.error(e); }
+      }
+      content.innerHTML = `<div class="welcome"><h1>Couldn't open that book</h1><p>This file may be corrupted or in an unsupported format. Try another EPUB.</p></div>`;
+    }
+  }
+
+  async function parseNav3(zip, opfDir, manifest){
+    const navItem = Object.values(manifest).find(m => (m.properties||'').includes('nav'));
+    if(!navItem) return [];
+    const navPath = joinPath(opfDir, navItem.href);
+    const entry = findZipFile(zip, navPath);
+    if(!entry) return [];
+    const text = await entry.async('text');
+    const doc = new DOMParser().parseFromString(text, 'text/html');
+    let nav = null;
+    doc.querySelectorAll('nav').forEach(n => {
+      if(!nav && (n.getAttribute('epub:type') === 'toc' || n.getAttribute('type') === 'toc')) nav = n;
+    });
+    if(!nav) nav = doc.querySelector('nav');
+    if(!nav) return [];
+    const navDir = dirOf(navPath);
+    const out = [];
+    function walk(ol, level){
+      for(const li of ol.children){
+        if(li.tagName.toLowerCase() !== 'li') continue;
+        const a = li.querySelector(':scope > a, :scope > span');
+        if(a && a.tagName.toLowerCase() === 'a'){
+          const href = a.getAttribute('href');
+          out.push({ title: a.textContent.trim(), href, level, resolvedPath: joinPath(navDir, href) });
+        }
+        const childOl = li.querySelector(':scope > ol');
+        if(childOl) walk(childOl, level+1);
+      }
+    }
+    const topOl = nav.querySelector('ol');
+    if(topOl) walk(topOl, 0);
+    return out;
+  }
+
+  async function parseNCX(zip, opfDir, manifest, opfDoc){
+    const ncxItem = Object.values(manifest).find(m => m.mediaType === 'application/x-dtbncx+xml');
+    if(!ncxItem) return [];
+    const ncxPath = joinPath(opfDir, ncxItem.href);
+    const entry = findZipFile(zip, ncxPath);
+    if(!entry) return [];
+    const text = await entry.async('text');
+    const doc = new DOMParser().parseFromString(text, 'application/xml');
+    const ncxDir = dirOf(ncxPath);
+    const out = [];
+    function walk(navPoint, level){
+      const children = Array.from(navPoint.children).filter(c => c.tagName === 'navPoint');
+      Array.from(navPoint.children).forEach(child => {
+        if(child.tagName === 'navPoint'){
+          const label = child.querySelector('navLabel > text');
+          const content = child.querySelector('content');
+          if(label && content){
+            const href = content.getAttribute('src');
+            out.push({ title: label.textContent.trim(), href, level, resolvedPath: joinPath(ncxDir, href) });
+          }
+          walk(child, level+1);
+        }
+      });
+    }
+    const navMap = doc.querySelector('navMap');
+    if(navMap) walk(navMap, 0);
+    return out;
+  }
+
+  function renderTOC(){
+    if(state.toc.length === 0){
+      tocList.innerHTML = '<li class="empty-state">This book has no table of contents.</li>';
+      return;
+    }
+    tocList.innerHTML = '';
+    state.toc.forEach((entry, i) => {
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.className = 'toc-item';
+      btn.dataset.level = Math.min(entry.level, 2);
+      btn.dataset.tocIndex = i;
+      btn.textContent = entry.title || `Untitled ${i+1}`;
+      btn.addEventListener('click', () => jumpToToc(i));
+      li.appendChild(btn);
+      tocList.appendChild(li);
+    });
+  }
+
+  function jumpToToc(tocIndex){
+    const entry = state.toc[tocIndex];
+    const path = entry.resolvedPath.split('#')[0];
+    let spineIdx = state.spine.indexOf(path);
+    if(spineIdx === -1){
+      // fall back to matching by filename
+      const name = path.split('/').pop();
+      spineIdx = state.spine.findIndex(p => p.split('/').pop() === name);
+    }
+    if(spineIdx === -1) spineIdx = 0;
+    const anchor = entry.resolvedPath.includes('#') ? entry.href.split('#')[1] : null;
+    renderChapter(spineIdx, 0, anchor);
+  }
+
+  /* ---------------- Rendering a chapter ---------------- */
+  async function renderChapter(index, scrollTop, anchorId){
+    if(index < 0 || index >= state.spine.length) return;
+    state.chapterIndex = index;
+    const path = state.spine[index];
+    const entry = findZipFile(state.zip, path);
+    if(!entry){
+      content.innerHTML = '<div class="welcome"><h1>Missing chapter</h1><p>This section could not be located in the EPUB file.</p></div>';
+      return;
+    }
+    const text = await entry.async('text');
+    const doc = new DOMParser().parseFromString(text, 'text/html');
+    doc.querySelectorAll('script, iframe, object, embed').forEach(s => s.remove());
+    doc.querySelectorAll('*').forEach(el => {
+      for(const attr of Array.from(el.attributes)){
+        const name = attr.name.toLowerCase();
+        if(/^on/.test(name)) el.removeAttribute(attr.name);
+        else if((name === 'href' || name === 'xlink:href' || name === 'src') && /^\s*javascript:/i.test(attr.value)){
+          el.removeAttribute(attr.name);
+        }
+      }
+    });
+
+    const chapterDir = dirOf(path);
+
+    // Collect the chapter's own CSS (inline <style> + linked stylesheets) so
+    // book-defined formatting like centered lines, drop caps, or small caps
+    // survives instead of being dropped when we lift out just the body.
+    const cssChunks = [];
+    doc.querySelectorAll('style').forEach(styleEl => {
+      cssChunks.push({ text: styleEl.textContent || '', dir: chapterDir });
+    });
+    const linkEls = Array.from(doc.querySelectorAll('link[rel~="stylesheet"], link[type="text/css"]'));
+    for(const linkEl of linkEls){
+      const href = linkEl.getAttribute('href');
+      if(!href) continue;
+      const resolved = joinPath(chapterDir, href);
+      const cssEntry = findZipFile(state.zip, resolved);
+      if(cssEntry){
+        const cssText = await cssEntry.async('text');
+        cssChunks.push({ text: cssText, dir: dirOf(resolved) });
+      }
+    }
+    doc.querySelectorAll('style, link').forEach(el => el.remove());
+    await applyBookCss(cssChunks);
+
+    const imgs = doc.querySelectorAll('img, image');
+    for(const img of imgs){
+      for(const name of ['src', 'xlink:href']){
+        if(!img.hasAttribute(name)) continue;
+        const src = img.getAttribute(name);
+        if(!src || /^(data:|blob:)/i.test(src)) continue;
+        const url = await getImageBlobUrl(joinPath(chapterDir, src));
+        if(url) img.setAttribute(name, url);
+        else img.removeAttribute(name);
+      }
+    }
+
+    for(const el of doc.querySelectorAll('[style]')){
+      const css = el.getAttribute('style');
+      if(/url\(/i.test(css)) el.setAttribute('style', await rewriteCssUrls(css, chapterDir));
+    }
+
+    doc.querySelectorAll('a[href]').forEach(a => {
+      const href = a.getAttribute('href');
+      if(/^[a-z]+:\/\//i.test(href) || href.startsWith('mailto:')) { a.target = '_blank'; return; }
+      const resolved = joinPath(chapterDir, href);
+      const cleanPath = resolved.split('#')[0];
+      let idx = state.spine.indexOf(cleanPath);
+      if(idx === -1){
+        const name = cleanPath.split('/').pop();
+        idx = state.spine.findIndex(p => p.split('/').pop() === name);
+      }
+      if(idx !== -1){
+        a.addEventListener('click', ev => {
+          ev.preventDefault();
+          renderChapter(idx, 0, href.includes('#') ? href.split('#')[1] : null);
+        });
+      }
+    });
+
+    content.innerHTML = doc.body ? doc.body.innerHTML : text;
+    pageInner.scrollTop = 0;
+    requestAnimationFrame(() => {
+      if(anchorId){
+        const target = content.querySelector('#'+CSS.escape(anchorId)) || content.querySelector(`[name="${anchorId}"]`);
+        if(target){ target.scrollIntoView(); return; }
+      }
+      if(scrollTop) pageInner.scrollTop = scrollTop;
+    });
+
+    updateProgress();
+    updateTocHighlight();
+    prevBtn.disabled = index <= 0;
+    nextBtn.disabled = index >= state.spine.length - 1;
+  }
+
+  // Pulls @font-face blocks out (they must live at the top level) and scopes
+  // everything else to #content, so a book's own stylesheet can format its
+  // text without ever leaking out and affecting the rest of the app UI.
+  async function applyBookCss(cssChunks){
+    const fontFaceTag = document.getElementById('bookFontFaces');
+    const scopedTag = document.getElementById('bookScopedStyle');
+    if(!cssChunks.length){
+      fontFaceTag.textContent = '';
+      scopedTag.textContent = '';
+      return;
+    }
+    const fontFaceRegex = /@font-face\s*{[^}]*}/gi;
+    const importRegex = /@import[^;]+;/gi;
+    let fontFaces = [];
+    let scopedParts = [];
+    for(const chunk of cssChunks){
+      let text = chunk.text.replace(importRegex, '');
+      const found = text.match(fontFaceRegex) || [];
+      for(const face of found){
+        fontFaces.push(await rewriteCssUrls(face, chunk.dir));
+      }
+      text = text.replace(fontFaceRegex, '');
+      text = await rewriteCssUrls(text, chunk.dir);
+      scopedParts.push(text);
+    }
+    fontFaceTag.textContent = fontFaces.join('\n');
+    scopedTag.textContent = scopedParts.length
+      ? `@scope (#content) {\n${scopedParts.join('\n')}\n}`
+      : '';
+  }
+
+  async function rewriteCssUrls(cssText, baseDir){
+    const urlRegex = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
+    const matches = [...cssText.matchAll(urlRegex)];
+    let result = cssText;
+    for(const m of matches){
+      const raw = m[2].trim();
+      if(/^(data:|blob:)/i.test(raw)) continue;
+      const url = await getImageBlobUrl(joinPath(baseDir, raw));
+      result = result.split(m[0]).join(url ? `url("${url}")` : '');
+    }
+    return result;
+  }
+
+  async function getImageBlobUrl(resolvedPath){
+    if(state.imageCache.has(resolvedPath)) return state.imageCache.get(resolvedPath);
+    const entry = findZipFile(state.zip, resolvedPath);
+    if(!entry) return null;
+    const blob = await entry.async('blob');
+    const url = URL.createObjectURL(blob);
+    state.imageCache.set(resolvedPath, url);
+    return url;
+  }
+
+  function updateProgress(){
+    const total = state.spine.length;
+    const pct = total <= 1 ? 100 : (state.chapterIndex / (total - 1)) * 100;
+    progressFill.style.width = pct + '%';
+  }
+
+  function updateTocHighlight(){
+    const currentPath = state.spine[state.chapterIndex];
+    document.querySelectorAll('.toc-item').forEach(el => el.classList.remove('current'));
+    const i = state.toc.findIndex(t => t.resolvedPath.split('#')[0] === currentPath);
+    if(i !== -1){
+      const el = document.querySelector(`.toc-item[data-toc-index="${i}"]`);
+      if(el) el.classList.add('current');
+    }
+  }
+
+  /* ---------------- Bookmarks ---------------- */
+  function loadBookmark(bookId){
+    if(IS_APP){
+      const b = state.books.find(x => x.id === bookId);
+      return b && b.bookmark ? b.bookmark : null;
+    }
+    try{
+      const raw = localStorage.getItem('folio:' + bookId);
+      return raw ? JSON.parse(raw) : null;
+    }catch(e){ return null; }
+  }
+  function saveBookmark(){
+    if(!state.currentBookId) return;
+    const data = { chapterIndex: state.chapterIndex, scrollTop: pageInner.scrollTop };
+    if(IS_APP){
+      const b = state.books.find(x => x.id === state.currentBookId);
+      if(b) b.bookmark = data;
+      saveLibrary();
+    } else {
+      try{ localStorage.setItem('folio:' + state.currentBookId, JSON.stringify(data)); }catch(e){}
+    }
+    bookmarkBtn.classList.add('active', 'pulse');
+    bookmarkBtn.textContent = '★';
+    setTimeout(() => bookmarkBtn.classList.remove('pulse'), 380);
+  }
+
+  /* ---------------- Navigation ---------------- */
+  prevBtn.addEventListener('click', () => renderChapter(state.chapterIndex - 1, 0));
+  nextBtn.addEventListener('click', () => renderChapter(state.chapterIndex + 1, 0));
+
+  document.addEventListener('keydown', e => {
+    if(['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+    if(e.key === 'ArrowRight') nextBtn.click();
+    if(e.key === 'ArrowLeft') prevBtn.click();
+    if(e.key === 'Escape' && state.focus) toggleFocus();
+  });
+
+  /* ---------------- External links ---------------- */
+  if(IS_APP){
+    content.addEventListener('click', e => {
+      const a = e.target.closest('a[href]');
+      if(!a) return;
+      const href = a.getAttribute('href');
+      if(/^(https?:\/\/|mailto:)/i.test(href)){
+        e.preventDefault();
+        TAURI.opener.openUrl(href).catch(err => console.error(err));
+      }
+    });
+
+    document.addEventListener('keydown', e => {
+      if(e.key === 'F11'){
+        e.preventDefault();
+        invoke('toggle_fullscreen').catch(err => console.error(err));
+      }
+    });
+  }
+
+  /* ---------------- Sidebar & tabs ---------------- */
+  function switchTab(name){
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    document.getElementById('panel-library').classList.toggle('hidden', name !== 'library');
+    document.getElementById('panel-contents').classList.toggle('hidden', name !== 'contents');
+  }
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+  function isMobile(){ return window.matchMedia('(max-width: 780px)').matches; }
+  function openSidebarUI(){
+    if(isMobile()) app.classList.add('sidebar-open');
+    app.classList.remove('sidebar-collapsed');
+  }
+  function closeSidebarUI(){
+    if(isMobile()) app.classList.remove('sidebar-open');
+    else app.classList.add('sidebar-collapsed');
+  }
+  function closeSidebarMobile(){ if(isMobile()) app.classList.remove('sidebar-open'); }
+
+  document.getElementById('toggleSidebar').addEventListener('click', () => {
+    const collapsed = app.classList.contains('sidebar-collapsed');
+    const open = app.classList.contains('sidebar-open');
+    if(isMobile()){ open ? closeSidebarUI() : openSidebarUI(); }
+    else { collapsed ? openSidebarUI() : closeSidebarUI(); }
+  });
+  document.getElementById('closeSidebar').addEventListener('click', closeSidebarUI);
+  scrim.addEventListener('click', closeSidebarUI);
+
+  /* start with sidebar open on desktop */
+  if(!isMobile()) app.classList.remove('sidebar-collapsed');
+
+  /* ---------------- File pickers ---------------- */
+  document.getElementById('pickFolder').addEventListener('click', pickFolder);
+  document.getElementById('pickFiles').addEventListener('click', async () => {
+    if(IS_APP){
+      try{
+        const paths = await TAURI.dialog.open({ multiple: true, filters: [{ name: 'EPUB', extensions: ['epub'] }] });
+        if(paths) addBooks(paths.map(pathBook));
+      }catch(err){ console.error(err); }
+      return;
+    }
+    document.getElementById('fileInput').click();
+  });
+  const refreshBtn = document.getElementById('refreshLibrary');
+  if(IS_APP){
+    refreshBtn.hidden = false;
+    refreshBtn.addEventListener('click', refreshLibrary);
+  }
+  document.getElementById('folderInput').addEventListener('change', e => handleFolderInput(e.target.files));
+  document.getElementById('fileInput').addEventListener('change', e => handleFilesInput(e.target.files));
+
+  /* ---------------- Reading settings ---------------- */
+  function applyReaderVars(){
+    document.documentElement.style.setProperty('--reader-size', state.fontSizeIdx + 'px');
+    document.documentElement.style.setProperty('--reader-leading', state.leading);
+    document.documentElement.style.setProperty('--reader-max', state.maxWidth);
+    document.documentElement.style.setProperty('--reader-family', state.family === 'serif' ? 'var(--font-serif)' : 'var(--font-sans-read)');
+    sizeSlider.value = state.fontSizeIdx;
+    sizeReadout.textContent = state.fontSizeIdx + 'px';
+  }
+
+  let settingsSaving = false;
+  let settingsPending = null;
+
+  function saveSettings(){
+    const s = { fontSizeIdx: state.fontSizeIdx, leading: state.leading, maxWidth: state.maxWidth, family: state.family };
+    if(IS_APP){
+      settingsPending = JSON.stringify(s);
+      flushSettings();
+    } else {
+      try{ localStorage.setItem('folio:settings', JSON.stringify(s)); }catch(e){}
+    }
+  }
+
+  async function flushSettings(){
+    if(settingsSaving || settingsPending === null) return;
+    const contents = settingsPending;
+    settingsPending = null;
+    settingsSaving = true;
+    try{ await invoke('save_data', { name:'settings', contents }); }
+    catch(err){ console.error(err); }
+    settingsSaving = false;
+    if(settingsPending !== null) flushSettings();
+  }
+
+  async function loadSettings(){
+    if(IS_APP){
+      try{
+        const raw = await invoke('load_data', { name:'settings' });
+        return raw ? JSON.parse(raw) : null;
+      }catch(e){ return null; }
+    }
+    try{
+      const raw = localStorage.getItem('folio:settings');
+      return raw ? JSON.parse(raw) : null;
+    }catch(e){ return null; }
+  }
+
+  function syncSettingsUI(){
+    document.querySelectorAll('#leadingSeg button').forEach(b => {
+      b.classList.toggle('active', parseFloat(b.dataset.val) === state.leading);
+    });
+    document.querySelectorAll('#widthSeg button').forEach(b => {
+      b.classList.toggle('active', b.dataset.val === state.maxWidth);
+    });
+    document.getElementById('fontFamily').classList.toggle('active', state.family === 'sans');
+  }
+
+  document.getElementById('fontDec').addEventListener('click', () => {
+    state.fontSizeIdx = Math.max(14, state.fontSizeIdx - 1);
+    applyReaderVars();
+    saveSettings();
+  });
+  document.getElementById('fontInc').addEventListener('click', () => {
+    state.fontSizeIdx = Math.min(30, state.fontSizeIdx + 1);
+    applyReaderVars();
+    saveSettings();
+  });
+  document.getElementById('fontFamily').addEventListener('click', (e) => {
+    state.family = state.family === 'serif' ? 'sans' : 'serif';
+    e.currentTarget.classList.toggle('active', state.family === 'sans');
+    applyReaderVars();
+    saveSettings();
+  });
+  sizeSlider.addEventListener('input', e => {
+    state.fontSizeIdx = parseInt(e.target.value, 10);
+    applyReaderVars();
+    saveSettings();
+  });
+
+  document.getElementById('leadingSeg').addEventListener('click', e => {
+    const btn = e.target.closest('button'); if(!btn) return;
+    document.querySelectorAll('#leadingSeg button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.leading = parseFloat(btn.dataset.val);
+    applyReaderVars();
+    saveSettings();
+  });
+  document.getElementById('widthSeg').addEventListener('click', e => {
+    const btn = e.target.closest('button'); if(!btn) return;
+    document.querySelectorAll('#widthSeg button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.maxWidth = btn.dataset.val;
+    applyReaderVars();
+    saveSettings();
+  });
+
+  const settingsBtn = document.getElementById('openSettings');
+  settingsBtn.addEventListener('click', () => {
+    settingsPopover.classList.toggle('open');
+    settingsBtn.classList.toggle('active');
+  });
+  document.addEventListener('click', e => {
+    if(!settingsPopover.contains(e.target) && e.target !== settingsBtn && !settingsPopover.classList.contains('closing')){
+      if(settingsPopover.classList.contains('open') && !settingsBtn.contains(e.target)){
+        settingsPopover.classList.remove('open');
+        settingsBtn.classList.remove('active');
+      }
+    }
+  });
+
+  /* ---------------- Bookmark & focus mode ---------------- */
+  bookmarkBtn.addEventListener('click', saveBookmark);
+
+  function toggleFocus(){
+    state.focus = !state.focus;
+    app.classList.toggle('focus', state.focus);
+    document.getElementById('focusMode').classList.toggle('active', state.focus);
+  }
+  document.getElementById('focusMode').addEventListener('click', toggleFocus);
+
+  /* ---------------- Init ---------------- */
+  async function init(){
+    const savedSettings = await loadSettings();
+    if(savedSettings){
+      if(typeof savedSettings.fontSizeIdx === 'number') state.fontSizeIdx = savedSettings.fontSizeIdx;
+      if(typeof savedSettings.leading === 'number') state.leading = savedSettings.leading;
+      if(typeof savedSettings.maxWidth === 'string') state.maxWidth = savedSettings.maxWidth;
+      if(savedSettings.family === 'serif' || savedSettings.family === 'sans') state.family = savedSettings.family;
+    }
+    applyReaderVars();
+    syncSettingsUI();
+    if(IS_APP) await loadLibrary();
+    if(IS_APP){
+      loadCovers().then(() => queueCovers());
+      syncLibrary();
+      window.addEventListener('focus', () => {
+        if(Date.now() - lastLibrarySync < 10000) return;
+        syncLibrary();
+      });
+      const wv = TAURI.webview.getCurrentWebview();
+      wv.onDragDropEvent(ev => {
+        const panel = document.getElementById('panel-library');
+        const type = ev.payload && ev.payload.type;
+        if(type === 'enter' || type === 'over'){
+          panel.classList.add('dropping');
+          return;
+        }
+        panel.classList.remove('dropping');
+        if(type === 'drop') handleDrop(ev.payload.paths || []);
+      });
+      const handleLaunchFiles = async () => {
+        try{
+          const paths = await invoke('take_launch_files');
+          if(!paths || paths.length === 0) return;
+          addBooks(paths.map(pathBook));
+          saveLibrary();
+          const first = state.books.find(b => b.path && b.path.toLowerCase() === paths[0].toLowerCase());
+          if(first) openBook(first);
+        }catch(err){ console.error(err); }
+      };
+      TAURI.event.listen('open-files', handleLaunchFiles);
+      handleLaunchFiles();
+    }
+  }
+  init();
+})();
+</script>
+</body>
+</html>

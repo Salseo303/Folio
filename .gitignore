@@ -1,0 +1,17 @@
+# Rust / Tauri build output (several GB, never commit)
+src-tauri/target/
+target/
+
+# Tauri generated files (rebuilt automatically)
+src-tauri/gen/
+
+# Not used in this project, but ignore if they ever appear
+node_modules/
+
+# Windows junk
+Thumbs.db
+desktop.ini
+
+# Temp files
+*.tmp
+*.log

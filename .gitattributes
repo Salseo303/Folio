@@ -1,0 +1,8 @@
+# Let git normalize line endings for text files
+* text=auto
+
+# Binary files: never touch
+*.ico binary
+*.png binary
+*.icns binary
+*.exe binary
